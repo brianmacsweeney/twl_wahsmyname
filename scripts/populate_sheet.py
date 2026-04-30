@@ -1,55 +1,33 @@
 """
-One-time script: seed a Google Sheet from data/players_enriched.js.
+One-time script: seed the Google Sheet from data/players_enriched.js.
+Outputs one row per clue (tall format). Run this when restructuring the sheet.
 
 Usage:
-    SHEET_ID=<your-sheet-id> python3 scripts/populate_sheet.py
+    python3 scripts/populate_sheet.py
 
-The sheet must already exist and be shared with the service account email
-in credentials/service_account.json.
+Sheet must be shared with the service account in credentials/service_account.json.
+Sheet ID is read from config.json.
 """
-import json, os, re
+import json, os
 import gspread
 from google.oauth2.service_account import Credentials
+
+CREDS_FILE = 'credentials/service_account.json'
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+PTS_TO_LEVEL = {50: 5, 40: 4, 30: 3, 20: 2, 10: 1}
+
+HEADERS = ['player_id', 'player_name', 'era', 'aliases', 'level', 'text', 'source', 'url']
+
 
 def load_config():
     with open('config.json') as f:
         return json.load(f)
 
-CREDS_FILE = 'credentials/service_account.json'
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-
-HEADERS = [
-    'id', 'name', 'era', 'aliases',
-    'clue_50_text', 'clue_50_source', 'clue_50_url',
-    'clue_40_text', 'clue_40_source', 'clue_40_url',
-    'clue_30_text', 'clue_30_source', 'clue_30_url',
-    'clue_20_text', 'clue_20_source', 'clue_20_url',
-    'clue_10_text', 'clue_10_source', 'clue_10_url',
-]
-
 
 def load_players():
     with open('data/players_enriched.js') as f:
         js = f.read()
-    js = js[len('const PLAYERS = '):-2]
-    return json.loads(js)
-
-
-def player_to_row(p):
-    row = [
-        p.get('id', ''),
-        p.get('name', ''),
-        p.get('era', ''),
-        '|'.join(p.get('aliases', [])),
-    ]
-    for pts in [50, 40, 30, 20, 10]:
-        clue = next((c for c in p['clues'] if c['pts'] == pts), {})
-        row += [
-            clue.get('text', ''),
-            clue.get('source', ''),
-            clue.get('url', '') or '',
-        ]
-    return row
+    return json.loads(js[len('const PLAYERS = '):-2])
 
 
 def main():
@@ -60,11 +38,26 @@ def main():
     ws = gc.open_by_key(sheet_id).sheet1
 
     players = load_players()
-    rows = [HEADERS] + [player_to_row(p) for p in players]
+    rows = [HEADERS]
+
+    for p in players:
+        aliases = '|'.join(p.get('aliases', []))
+        sorted_clues = sorted(p['clues'], key=lambda c: -c['pts'])
+        for i, clue in enumerate(sorted_clues):
+            rows.append([
+                p['id'],
+                p['name'] if i == 0 else '',
+                p.get('era', '') if i == 0 else '',
+                aliases if i == 0 else '',
+                PTS_TO_LEVEL.get(clue['pts'], clue['pts']),
+                clue.get('text', ''),
+                clue.get('source', ''),
+                clue.get('url', '') or '',
+            ])
 
     ws.clear()
     ws.update(rows)
-    print(f"Done — {len(players)} players written to sheet.")
+    print(f"Done — {len(players)} players, {len(rows) - 1} clue rows written to sheet.")
 
 
 if __name__ == '__main__':
